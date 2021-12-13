@@ -9,7 +9,7 @@ Original file is located at
 
 
 deviceno = 0
-modelname = 'bert-large-uncased'
+modelname = 'bert-base-uncased'
 #modelname = "cardiffnlp/twitter-roberta-base-offensive"
 #modelname = 'microsoft/deberta-base'
 modelname = 'facebook/bart-large'
