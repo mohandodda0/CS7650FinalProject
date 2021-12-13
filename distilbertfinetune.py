@@ -16,7 +16,7 @@ modelname = 'facebook/bart-large'
 #modelname = 'unitary/toxic-bert'
 max_length = 128
 batch_size = 8
-epochs = 8
+epochs = 4
 import pandas as pd
 df = pd.read_csv('balancedSpaceSep.csv')
 
