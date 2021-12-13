@@ -7,42 +7,25 @@ Original file is located at
     https://colab.research.google.com/drive/1nVCd4_trINf5mjya5LySO1kRUrW3CGq1
 """
 
-!pip install transformers
 
-# train_df = pd.read_csv('train.csv', header=0)
-# val_df = pd.read_csv('val.csv', header=0)
-# test_df = pd.read_csv('test.csv', header=0)
-
-
-#divide data into train, validation, and test datasets
-# num_tweets = len(full_df)
-# idxs = list(range(num_tweets))
-# print('Total tweets in dataset: ', num_tweets)
-# test_idx = idxs[:int(0.1*num_tweets)]
-# val_idx = idxs[int(0.1*num_tweets):int(0.2*num_tweets)]
-# train_idx = idxs[int(0.2*num_tweets):]
-
-# train_df = full_df.iloc[train_idx].reset_index(drop=True)
-# val_df = full_df.iloc[val_idx].reset_index(drop=True)
-# test_df = full_df.iloc[test_idx].reset_index(drop=True)
-
-# train_data = train_df[['id', 'text', 'target']]
-# val_data   = val_df[['id', 'text', 'target']]
-# test_data  = test_df[['id', 'text', 'target']]
-# train_dataset = ConversationDataset(train_data)
-# val_dataset   = ConversationDataset(val_data)
-# test_dataset  = ConversationDataset(test_data)
-
+deviceno = 0
+modelname = 'bert-large-uncased'
+#modelname = "cardiffnlp/twitter-roberta-base-offensive"
+#modelname = 'microsoft/deberta-base'
+modelname = 'facebook/bart-large'
+#modelname = 'unitary/toxic-bert'
+max_length = 128
+batch_size = 8
+epochs = 8
 import pandas as pd
 df = pd.read_csv('balancedSpaceSep.csv')
-df
 
 traindf = df[df['split']=='train']
 testdf = df[df['split']=='test']
 testdf
 
 from transformers import AutoTokenizer
-tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
+tokenizer = AutoTokenizer.from_pretrained(modelname)
 
 import pandas as pd
 import torch
@@ -74,7 +57,7 @@ for sent in train_sentences:
     encoded_dict = tokenizer.encode_plus(
                         sent,                      # Sentence to encode.
                         add_special_tokens = True, # Add '[CLS]' and '[SEP]'
-                        max_length = 64,           # Pad & truncate all sentences.
+                        max_length = max_length,           # Pad & truncate all sentences.
                         pad_to_max_length = True,
                         return_attention_mask = True,   # Construct attn. masks.
                         return_tensors = 'pt',     # Return pytorch tensors.
@@ -154,7 +137,6 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 # The DataLoader needs to know our batch size for training, so we specify it 
 # here. For fine-tuning BERT on a specific task, the authors recommend a batch 
 # size of 16 or 32.
-batch_size = 32
 
 # Create the DataLoaders for our training and validation sets.
 # We'll take training samples in random order. 
@@ -176,7 +158,7 @@ from transformers import BertForSequenceClassification, AdamW, BertConfig, AutoM
 # Load BertForSequenceClassification, the pretrained BERT model with a single 
 # linear classification layer on top. 
 model = AutoModelForSequenceClassification.from_pretrained(
-    'distilbert-base-uncased', # Use the 12-layer BERT model, with an uncased vocab.
+    modelname, # Use the 12-layer BERT model, with an uncased vocab.
     num_labels = 2, # The number of output labels--2 for binary classification.
                     # You can increase this for multi-class tasks.   
     output_attentions = False, # Whether the model returns attentions weights.
@@ -187,7 +169,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 # model.cuda()
 device = 'cpu'
 if torch.cuda.is_available():
-    device = 'cuda'
+    device = 'cuda'+':'+str(deviceno)
 model = model.to(device)
 print(device)
 
@@ -201,7 +183,7 @@ from transformers import get_linear_schedule_with_warmup
 # Number of training epochs. The BERT authors recommend between 2 and 4. 
 # We chose to run for 4, but we'll see later that this may be over-fitting the
 # training data.
-epochs = 4
+
 
 # Total number of training steps is [number of batches] x [number of epochs]. 
 # (Note that this is not the same as the number of training samples).
