@@ -12,9 +12,6 @@ This example notebook shows how an already-trained CRAFT model can be applied to
 """
 
 # start by installing ConvoKit on the colab VM
-!pip install -q convokit
-
-!pip install transformers
 
 # Commented out IPython magic to ensure Python compatibility.
 # import necessary libraries, including convokit
@@ -36,7 +33,7 @@ import itertools
 from urllib.request import urlretrieve
 from convokit import download, Corpus, Conversation
 # %matplotlib inline
-
+device = 'cuda:5'
 # define globals and constants
 
 MAX_LENGTH = 80  # Maximum sentence length (number of tokens) to consider
@@ -48,7 +45,7 @@ encoder_n_layers = 2
 context_encoder_n_layers = 2
 decoder_n_layers = 2
 dropout = 0.1
-batch_size = 32
+batch_size = 6
 # Configure training/optimization
 clip = 50.0
 teacher_forcing_ratio = 1.0
@@ -164,8 +161,8 @@ def tokenize(text):
 from transformers import AutoTokenizer
 #modelname = "cardiffnlp/twitter-roberta-base-offensive"
 #modelname = 'microsoft/deberta-base'
-modelname = 'facebook/bart-large'
-modelname = 'distilbert-base-uncased'
+#modelname = 'facebook/bart-large'
+modelname = 'bert-base-uncased'
 max_length = 128
 tokenizer = AutoTokenizer.from_pretrained(modelname)
 
@@ -378,13 +375,8 @@ The following 3 cells can be used for data labeling. We can 100% do this before 
 #  print('Currently in conversation ',last_conversation)
 
 # let's check some quick stats to verify that the corpus loaded correctly
-print(len(corpus.get_utterance_ids()))
-print(len(corpus.get_usernames()))
-print(len(corpus.get_conversation_ids()))
 
 # Let's also take a look at some example data to see what kinds of information/metadata are available to us
-print(list(corpus.iter_conversations())[0].__dict__)
-print(list(corpus.iter_utterances())[0])
 
 """Now we can use the utilities defined in Part 1 to convert the ConvoKit conversational data into a tokenized form that can be straightforwardly turned into Tensors later."""
 
@@ -393,23 +385,14 @@ print(list(corpus.iter_utterances())[0])
 voc = loadPrecomputedVoc("wikiconv", WORD2INDEX_URL, INDEX2WORD_URL)
 
 # Inspect the Voc object to make sure it loaded correctly
-print(voc.num_words) # expected vocab size is 50004: it was built using a fixed vocab size of 50k plus 4 spots for special tokens PAD, SOS, EOS, and UNK.
-print(list(voc.word2index.items())[:10])
-print(list(voc.index2word.items())[:10])
 
 # Convert the test set data into a list of input/label pairs. Each input will represent the conversation as a list of lists of tokens.
 train_pairs = loadPairs(voc, corpus, "train", last_only=True)[0]
 val_pairs = loadPairs(voc, corpus, "val", last_only=True)[0]
 test_pairs, test_indxs = loadPairs(voc, corpus, "test")
 
-print(len(train_pairs))
-print(len(val_pairs))
-print(len(test_pairs))
 
 # Validate the conversion by checking data size and some samples
-print(len(test_pairs))
-for p in test_pairs[:8]:
-    print((p[2],p[2])+p)
 
 """## Part 3: define the model
 
@@ -769,14 +752,14 @@ def evaluateDataset(dataset, conv_idxs, encoder, context_encoder, predictor, voc
 random.seed(2019)
 
 # Tell torch to use GPU. Note that if you are running this notebook in a non-GPU environment, you can change 'cuda' to 'cpu' to get the code to run.
-device = torch.device('cuda')
-
+device = torch.device('cuda:5')
+device = 'cuda:5'
 print("Loading saved parameters...")
 if not os.path.isfile("model.tar"):
     print("\tDownloading trained CRAFT...")
     urlretrieve(MODEL_URL, "model.tar")
     print("\t...Done!")
-checkpoint = torch.load("model.tar")
+checkpoint = torch.load("model.tar", map_location=device)
 # If running in a non-GPU environment, you need to tell PyTorch to convert the parameters to CPU tensor format.
 # To do so, replace the previous line with the following:
 #checkpoint = torch.load("model.tar", map_location=torch.device('cpu'))
