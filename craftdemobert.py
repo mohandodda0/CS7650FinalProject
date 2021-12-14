@@ -33,7 +33,7 @@ import itertools
 from urllib.request import urlretrieve
 from convokit import download, Corpus, Conversation
 # %matplotlib inline
-device = 'cuda:5'
+device = 'cuda:6'
 # define globals and constants
 
 MAX_LENGTH = 80  # Maximum sentence length (number of tokens) to consider
@@ -45,7 +45,7 @@ encoder_n_layers = 2
 context_encoder_n_layers = 2
 decoder_n_layers = 2
 dropout = 0.1
-batch_size = 6
+batch_size = 8
 # Configure training/optimization
 clip = 50.0
 teacher_forcing_ratio = 1.0
@@ -161,18 +161,14 @@ def tokenize(text):
 from transformers import AutoTokenizer
 #modelname = "cardiffnlp/twitter-roberta-base-offensive"
 #modelname = 'microsoft/deberta-base'
-modelname = 'facebook/bart-large'
-#modelname = 'bert-base-uncased'
+#modelname = 'facebook/bart-large'
+modelname = 'bert-base-uncased'
 max_length = 128
 tokenizer = AutoTokenizer.from_pretrained(modelname)
 
 def processDialog(voc, dialog):
     processed = []
-    for linear_dialog in dialog.get_root_to_leaf_paths():
-        if linear_dialog[-1].meta['comment_has_personal_attack']:
-            break
-    processed_linear_dialog = []
-    for utterance in linear_dialog:
+    for utterance in dialog.iter_utterances():
         tokens = tokenize(utterance.text)
         # replace out-of-vocabulary tokens
         for i in range(len(tokens)):
@@ -186,9 +182,8 @@ def processDialog(voc, dialog):
                         return_attention_mask = True,   # Construct attn. masks.
                         return_tensors = 'pt',     # Return pytorch tensors.
                    )
-        processed_linear_dialog.append({"tokens": tokens, "is_attack": int(utterance.meta['comment_has_personal_attack']), "id": utterance.id,
+        processed.append({"tokens": tokens, "is_attack": int(utterance.meta['comment_has_personal_attack']), "id": utterance.id,
                                        'berttokens':encoded_dict['input_ids'], 'attention_mask': encoded_dict['attention_mask']})
-    processed.append(processed_linear_dialog)
     return processed
 
 # Load context-reply pairs from the Corpus, optionally filtering to only conversations
@@ -207,25 +202,20 @@ def loadPairs(voc, corpus, split=None, last_only=False):
     all_conversations = []
     for convo in corpus.iter_conversations():
         # consider only conversations in the specified split of the data
-        integrity = convo.check_integrity()
-        if (split is None or convo.meta['split'] == split) and integrity:
-            dialog_list = processDialog(voc, convo)
-            for dialog in dialog_list:
-                iter_range = range(1, len(dialog)) if not last_only else [len(dialog)-1]
-                conversation_indxs = []
-                for idx in iter_range:
-                    reply = dialog[idx]["tokens"][:(MAX_LENGTH-1)]
-                    label = dialog[idx]["is_attack"]
-                    comment_id = dialog[idx]["id"]
-                    # gather as context all utterances preceding the reply
-                    context = [u["tokens"][:(MAX_LENGTH-1)] for u in dialog[:idx]]
-                    berttokens = dialog[idx]["berttokens"]
-                    attention_mask = dialog[idx]['attention_mask']
-                    pairs.append((context, reply, label, comment_id, berttokens, attention_mask))
-                    conversation_indxs.append(conv_idx)
-                    conv_idx += 1
-                all_conversations.append(conversation_indxs)
-    return pairs, all_conversations
+        if (split is None or convo.meta['split'] == split):
+            dialog = processDialog(voc, convo)
+            iter_range = range(1, len(dialog)) if not last_only else [len(dialog)-1]
+
+            for idx in iter_range:
+                reply = dialog[idx]["tokens"][:(MAX_LENGTH-1)]
+                label = dialog[idx]["is_attack"]
+                comment_id = dialog[idx]["id"]
+                # gather as context all utterances preceding the reply
+                context = [u["tokens"][:(MAX_LENGTH-1)] for u in dialog[:idx]]
+                berttokens = dialog[idx]["berttokens"]
+                attention_mask = dialog[idx]['attention_mask']
+                pairs.append((context, reply, label, comment_id, berttokens, attention_mask))
+    return pairs
 
 # Helper functions for turning dialog and text sequences into tensors, and manipulating those tensors
 
@@ -387,9 +377,9 @@ voc = loadPrecomputedVoc("wikiconv", WORD2INDEX_URL, INDEX2WORD_URL)
 # Inspect the Voc object to make sure it loaded correctly
 
 # Convert the test set data into a list of input/label pairs. Each input will represent the conversation as a list of lists of tokens.
-train_pairs = loadPairs(voc, corpus, "train", last_only=True)[0]
-val_pairs = loadPairs(voc, corpus, "val", last_only=True)[0]
-test_pairs, test_indxs = loadPairs(voc, corpus, "test")
+train_pairs = loadPairs(voc, corpus, "train", last_only=True)
+val_pairs = loadPairs(voc, corpus, "val", last_only=True)
+test_pairs = loadPairs(voc, corpus, "test")
 
 
 # Validate the conversion by checking data size and some samples
@@ -692,10 +682,12 @@ def trainIters(voc, pairs, val_pairs, encoder, context_encoder, attack_clf,
                     'en_opt': encoder_optimizer.state_dict(),
                     'ctx_opt': context_encoder_optimizer.state_dict(),
                     'atk_clf_opt': attack_clf_optimizer.state_dict(),
+                    'transformer_model': transformer_model.state_dict(),
+                    'transformer_opt': transformer_optimizer.state_dict(),
                     'loss': loss,
                     'voc_dict': voc.__dict__,
                     'embedding': embedding.state_dict()
-                }, "finetuned_model.tar")
+                }, "finetuned_model2.tar")
             
             # put the network components back into training mode
             encoder.train()
@@ -715,7 +707,8 @@ def evaluateBatch(encoder, context_encoder, predictor, voc, input_batch, dialog_
     predictions = (scores.argmax(dim=1)).float() ############ scores > 0.5 to scores.argmax(dim=1)
     return predictions, scores
 
-def evaluateDataset(dataset, conv_idxs, encoder, context_encoder, predictor, voc, batch_size, device):
+
+def evaluateDataset(dataset, encoder, context_encoder, predictor, voc, batch_size, device):
     # create a batch iterator for the given data
     batch_iterator = batchIterator(voc, dataset, batch_size, shuffle=False)
     # find out how many iterations we will need to cover the whole dataset
@@ -740,7 +733,7 @@ def evaluateDataset(dataset, conv_idxs, encoder, context_encoder, predictor, voc
             convo_id = convo_ids[i]
             pred = predictions[i].item()
             score = scores[i,1].item() ######################### grab position 1
-            output_df["id"].append((iteration-1)*batch_size + i)
+            output_df["id"].append(convo_id)
             output_df["prediction"].append(pred)
             output_df["score"].append(score)
                 
@@ -748,12 +741,14 @@ def evaluateDataset(dataset, conv_idxs, encoder, context_encoder, predictor, voc
 
     return pd.DataFrame(output_df).set_index("id")
 
+
+
 # Fix random state (affect native Python code only, does not affect PyTorch and hence does not guarantee reproducibility)
 random.seed(2019)
 
 # Tell torch to use GPU. Note that if you are running this notebook in a non-GPU environment, you can change 'cuda' to 'cpu' to get the code to run.
-device = torch.device('cuda:5')
-device = 'cuda:5'
+device = torch.device('cuda:6')
+device = 'cuda:6'
 print("Loading saved parameters...")
 if not os.path.isfile("model.tar"):
     print("\tDownloading trained CRAFT...")
@@ -825,7 +820,7 @@ print('Building optimizers...')
 encoder_optimizer = optim.Adam(encoder.parameters(), lr=labeled_learning_rate)
 context_encoder_optimizer = optim.Adam(context_encoder.parameters(), lr=labeled_learning_rate)
 attack_clf_optimizer = optim.Adam(attack_clf.parameters(), lr=labeled_learning_rate)
-transformer_optimizer = optim.AdamW(transformer_model.parameters(),
+transformer_optimizer = AdamW(transformer_model.parameters(),
                   lr = 2e-5, # args.learning_rate - default is 5e-5, our notebook had 2e-5
                   eps = 1e-8 # args.adam_epsilon  - default is 1e-8.
                 )
@@ -852,7 +847,7 @@ transformer_model.eval()
 predictor = Predictor(encoder, context_encoder, attack_clf, transformer_model)
 
 # Run the pipeline!
-forecasts_df = evaluateDataset(test_pairs, test_indxs, encoder, context_encoder, predictor, voc, batch_size, device)
+forecasts_df = evaluateDataset(test_pairs,encoder, context_encoder, predictor, voc, batch_size, device)
 
 # Inspect some of the outputs as a sanity-check
 forecasts_df.head(20)
@@ -873,23 +868,33 @@ Now that the hard part is done, all that is left to do is to evaluate the predic
 # set up to not look at the last comment, meaning that all forecasts we obtained are forecasts made prior to derailment. This simplifies
 # the computation of forecast accuracy as we now do not need to explicitly consider when a forecast was made.
 
+for convo in corpus.iter_conversations():
+    # only consider test set conversations (we did not make predictions for the other ones)
+    if convo.meta['split'] == "test":
+        for utt in convo.iter_utterances():
+            if utt.id in forecasts_df.index:
+                utt.meta['forecast_score'] = forecasts_df.loc[utt.id].score
+
+
+
 conversational_forecasts_df = {
     "convo_id": [],
     "label": [],
     "score": [],
     "prediction": []
 }
-i = 0
-for convo in test_indxs:
-    conversational_forecasts_df['convo_id'].append(i)
-    i += 1
-    conversational_forecasts_df['label'].append(int(test_pairs[convo[-1]][2]))
-    forecast_scores = [forecasts_df.loc[utt].score for utt in convo]
-    conversational_forecasts_df['score'] = np.max(forecast_scores)
-    conversational_forecasts_df['prediction'].append(int(np.max(forecast_scores) > FORECAST_THRESH))
+
+for convo in corpus.iter_conversations():
+    if convo.meta['split'] == "test":
+        conversational_forecasts_df['convo_id'].append(convo.id)
+        conversational_forecasts_df['label'].append(int(convo.meta['conversation_has_personal_attack']))
+        forecast_scores = [utt.meta['forecast_score'] for utt in convo.iter_utterances() if 'forecast_score' in utt.meta]
+        conversational_forecasts_df['score'] = np.max(forecast_scores)
+        conversational_forecasts_df['prediction'].append(int(np.max(forecast_scores) > FORECAST_THRESH))
 
 conversational_forecasts_df = pd.DataFrame(conversational_forecasts_df).set_index("convo_id")
 print((conversational_forecasts_df.label == conversational_forecasts_df.prediction).mean())
+
 
 np.sum(conversational_forecasts_df.prediction)
 
@@ -910,22 +915,27 @@ get_pr_stats(conversational_forecasts_df.prediction, conversational_forecasts_df
 The goal of CRAFT is to forecast outcomes in advance, but how far in advance does it typically make its prediction? Following the paper, we measure this in two ways: the number of *comments* between the first prediction and the actual derailment, and how much *elapsed time* that gap actually translates to.
 """
 
+
+
+
 comments_until_derail = {} # store the "number of comments until derailment" metric for each conversation
 time_until_derail = {} # store the "time until derailment" metric for each conversation
-convo_idx = 0
-a = 0
-for convo in test_indxs:
-    if test_pairs[convo[-1]][2] == 1:
-        a += 1
+
+for convo in corpus.iter_conversations():
+    if convo.meta['split'] == "test" and convo.meta['conversation_has_personal_attack']:
+        # filter out the section header as usual
+        utts = [utt for utt in convo.iter_utterances() if not utt.meta['is_section_header']]
         # by construction, the last comment is the one with the personal attack
-        derail_idx = len(convo) - 1
+        derail_idx = len(utts) - 1
         # now scan the utterances in order until we find the first derailment prediction (if any)
-        for idx in range(1, len(convo)):
-            if forecasts_df.loc[convo[idx]].score > FORECAST_THRESH:
-                comments_until_derail[convo_idx] = derail_idx - (idx-1)
-                #time_until_derail[convo_idx] = utts[derail_idx].timestamp - utts[(idx-1)].timestamp
+        for idx in range(1, len(utts)):
+            if utts[idx].meta['forecast_score'] > FORECAST_THRESH:
+                # recall that the forecast_score meta field specifies what CRAFT thought this comment would look like BEFORE it
+                # saw this comment. So the actual CRAFT forecast is made during the previous comment; we account for this by 
+                # subtracting 1 from idx
+                comments_until_derail[convo.id] = derail_idx - (idx-1)
+                time_until_derail[convo.id] = utts[derail_idx].timestamp - utts[(idx-1)].timestamp
                 break
-    convo_idx += 1
 
 # compute some quick statistics about the distribution of the "number of comments until derailment" metric
 comments_until_derail_vals = np.asarray(list(comments_until_derail.values()))
@@ -933,8 +943,8 @@ print(np.min(comments_until_derail_vals), np.max(comments_until_derail_vals), np
 
 # compute some quick statistics about the distribution of the "time until derailment" metric
 # note that since timestamps are in seconds, we convert to hours by dividing by 3600, to make it more human readable
-#time_until_derail_vals = np.asarray(list(time_until_derail.values())) / 3600
-#print(np.min(time_until_derail_vals), np.max(time_until_derail_vals), np.median(time_until_derail_vals), np.mean(time_until_derail_vals))
+time_until_derail_vals = np.asarray(list(time_until_derail.values())) / 3600
+print(np.min(time_until_derail_vals), np.max(time_until_derail_vals), np.median(time_until_derail_vals), np.mean(time_until_derail_vals))
 
 # visualize the distribution of "number of comments until derailment" as a histogram (reproducing Figure 4 from the paper)
 plt.rcParams['figure.figsize'] = (10.0, 5.0)
