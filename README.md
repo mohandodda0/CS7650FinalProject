@@ -1,6 +1,6 @@
 # CS7650FinalProject
 
- ### LinearDatasetPrepForBERT.ipynb is used to make the linearized datasets for BERT. It outputs the csv files in the Github Repo
+ ##### LinearDatasetPrepForBERT.ipynb is used to make the linearized datasets for BERT. It outputs the csv files in the Github Repo
  ### Modified_(linearized)_CRAFT_inference_demo_using_ConvoKit.ipynb is the notebook that makes the linearized unbalanced dataset and trains a CRAFT model
  Modified_(linearized_and_balanced)_CRAFT_inference_demo_using_ConvoKit.ipynb is the notebook that makes the linearized dataset which is balanced and trains a CRAFT model
  Modified_(tree)_CRAFT_inference_demo_using_ConvoKit.ipynb is the notebook that trains the CRAFT model on the original dataset
