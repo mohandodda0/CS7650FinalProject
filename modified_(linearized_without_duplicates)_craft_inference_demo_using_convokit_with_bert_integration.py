@@ -161,8 +161,8 @@ def tokenize(text):
 from transformers import AutoTokenizer
 #modelname = "cardiffnlp/twitter-roberta-base-offensive"
 #modelname = 'microsoft/deberta-base'
-modelname = 'facebook/bart-large'
-#modelname = 'bert-base-uncased'
+#modelname = 'facebook/bart-large'
+modelname = 'bert-base-uncased'
 max_length = 128
 tokenizer = AutoTokenizer.from_pretrained(modelname)
 
